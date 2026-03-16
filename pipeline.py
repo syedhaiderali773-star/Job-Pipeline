@@ -3,23 +3,51 @@ import requests, json, time, os
 APIFY_TOKEN = os.environ["APIFY_TOKEN"]
 MAKE_WEBHOOK = os.environ["MAKE_WEBHOOK_URL"]
 
+KEYWORDS = [
+    "junior", "trainee", "associate", "graduate", "entry level",
+    "business analyst", "project coordinator", "operations",
+    "supply chain", "marketing", "digital", "data analyst",
+    "product manager", "business development", "strategy",
+    "consulting", "e-commerce", "procurement", "logistics",
+    "finance analyst", "hr coordinator", "sales associate",
+    "customer success", "program coordinator", "project management"
+]
+
+CITIES = [
+    "Berlin", "Munich", "Hamburg", "Frankfurt", "Cologne",
+    "Stuttgart", "Dusseldorf", "Leipzig", "Dortmund", "Essen",
+    "Bremen", "Dresden", "Hannover", "Nuremberg", "Mannheim",
+    "Augsburg", "Wiesbaden", "Bonn", "Karlsruhe", "Munster",
+    "Freiburg", "Heidelberg", "Kiel", "Mainz", "Erfurt"
+]
+
+SEARCH_URLS = []
+
+KEYWORD_GROUPS = [
+    "junior OR trainee OR associate OR graduate",
+    "business+analyst OR operations OR supply+chain OR procurement OR logistics",
+    "marketing OR digital OR consulting OR e-commerce OR strategy",
+    "data+analyst OR project+manager OR business+development OR customer+success"
+]
+
+for group in KEYWORD_GROUPS:
+    for city in CITIES[:5]:
+        SEARCH_URLS.append(
+            f"https://www.linkedin.com/jobs/search/?keywords={group}&location={city}&f_TPR=r7200&f_E=1,2,3,4"
+        )
+    for location in ["Germany", "DACH", "EMEA"]:
+        SEARCH_URLS.append(
+            f"https://www.linkedin.com/jobs/search/?keywords={group}&location={location}&f_TPR=r7200&f_E=1,2,3,4"
+        )
+
 SEARCH_INPUTS = {
-  "cheap_scraper~linkedin-job-scraper": {
-    "urls": [
-      "https://www.linkedin.com/jobs/search/?keywords=junior+OR+trainee+OR+associate&location=Berlin&f_TPR=r7200&f_E=1,2,3,4",
-      "https://www.linkedin.com/jobs/search/?keywords=junior+OR+trainee+OR+associate&location=Munich&f_TPR=r7200&f_E=1,2,3,4",
-      "https://www.linkedin.com/jobs/search/?keywords=junior+OR+trainee+OR+associate&location=Hamburg&f_TPR=r7200&f_E=1,2,3,4",
-      "https://www.linkedin.com/jobs/search/?keywords=junior+OR+trainee+OR+associate&location=Frankfurt&f_TPR=r7200&f_E=1,2,3,4",
-      "https://www.linkedin.com/jobs/search/?keywords=junior+OR+trainee+OR+associate&location=Cologne&f_TPR=r7200&f_E=1,2,3,4",
-      "https://www.linkedin.com/jobs/search/?keywords=business+analyst+OR+operations+OR+supply+chain&location=Germany&f_TPR=r7200&f_E=1,2,3,4",
-      "https://www.linkedin.com/jobs/search/?keywords=marketing+OR+digital+OR+consulting&location=Germany&f_TPR=r7200&f_E=1,2,3,4",
-      "https://www.linkedin.com/jobs/search/?keywords=junior+business&location=DACH&f_TPR=r7200&f_E=1,2,3,4"
-    ],
-    "count": 50
-  }
+    "cheap_scraper~linkedin-job-scraper": {
+        "urls": SEARCH_URLS,
+        "count": 50
+    }
 }
 
-GERMAN_REQUIRED_KEYWORDS = [
+GERMAN_REQUIRED = [
     "deutschkenntnisse erforderlich",
     "deutsch zwingend",
     "german is mandatory",
@@ -31,11 +59,21 @@ GERMAN_REQUIRED_KEYWORDS = [
     "sehr gute deutschkenntnisse",
     "german: c1",
     "german: c2",
-    "muttersprache deutsch"
+    "muttersprache deutsch",
+    "fließendes deutsch",
+    "deutsch voraussetzung",
+    "deutschkenntnisse vorausgesetzt",
+    "german language is a must",
+    "fluent german",
+    "fluency in german is required",
+    "german fluency required",
+    "c1 german",
+    "c2 german"
 ]
 
-GERMAN_OK_KEYWORDS = [
+GERMAN_OK = [
     "german is a plus",
+    "german is an advantage",
     "german preferred",
     "basic german",
     "german b1",
@@ -44,37 +82,61 @@ GERMAN_OK_KEYWORDS = [
     "no german required",
     "english is sufficient",
     "english only",
-    "working knowledge of german"
+    "working knowledge of german",
+    "german is beneficial",
+    "german is desirable",
+    "german is welcome",
+    "knowledge of german is a plus"
 ]
 
-def filter_job(description):
+GERMAN_TITLE_SYLLABLES = [
+    "leiter", "leitung", "kaufmann", "kauffrau", "sachbearbeiter",
+    "werkstudent", "referent", "mitarbeiter", "vertrieb", "einkauf",
+    "buchhaltung", "praktikant", "ausbildung", "beratung", "entwicklung",
+    "geschafts", "projekt", "abteilung", "verantwortlich", "stellvertreter"
+]
+
+def is_german_title(title):
+    title_lower = title.lower()
+    for syllable in GERMAN_TITLE_SYLLABLES:
+        if syllable in title_lower:
+            return True
+    return False
+
+def is_german_description(description):
     desc_lower = description.lower()
-    
-    # Fail if description is mostly German (common German words)
-    german_word_count = sum([
-        desc_lower.count(" und "),
-        desc_lower.count(" die "),
-        desc_lower.count(" der "),
-        desc_lower.count(" das "),
-        desc_lower.count(" wir "),
-        desc_lower.count(" sie "),
-        desc_lower.count(" mit ")
-    ])
-    if german_word_count > 10:
-        return {"pass": False, "german_requirement": "German Description"}
+    german_words = [
+        " und ", " die ", " der ", " das ", " wir ",
+        " sie ", " mit ", " für ", " von ", " auf ",
+        " ist ", " ein ", " eine ", " nicht ", " auch ",
+        " bei ", " als ", " nach ", " aber ", " oder "
+    ]
+    count = sum(desc_lower.count(w) for w in german_words)
+    return count > 15
+
+def filter_job(title, description):
+    desc_lower = description.lower()
+
+    # Fail if title has German syllables
+    if is_german_title(title):
+        return {"pass": False, "reason": "German title"}
+
+    # Fail if description is written in German
+    if is_german_description(description):
+        return {"pass": False, "reason": "German description"}
 
     # Fail if German explicitly required
-    for kw in GERMAN_REQUIRED_KEYWORDS:
+    for kw in GERMAN_REQUIRED:
         if kw in desc_lower:
-            return {"pass": False, "german_requirement": "Required"}
+            return {"pass": False, "reason": "German required"}
 
-    # Pass if explicitly OK without German
-    for kw in GERMAN_OK_KEYWORDS:
+    # Pass if German listed as plus/optional
+    for kw in GERMAN_OK:
         if kw in desc_lower:
-            return {"pass": True, "german_requirement": "Not Required"}
+            return {"pass": True, "german_requirement": "German is a plus"}
 
-    # Pass if description is in English
-    return {"pass": True, "german_requirement": "Not Specified"}
+    # Pass — English description, no German requirement found
+    return {"pass": True, "german_requirement": "Not specified"}
 
 def send_to_sheet(job, filter_result):
     payload = {
@@ -85,42 +147,14 @@ def send_to_sheet(job, filter_result):
         "city": job.get("location", ""),
         "posted": job.get("postedAt", ""),
         "applicants": job.get("applicantsCount", ""),
-        "german_req": filter_result.get("german_requirement", ""),
+        "german_req": filter_result.get("german_requirement", "Not specified"),
         "level": job.get("seniorityLevel", ""),
         "apply_link": job.get("link", ""),
         "status": "New",
-        "custom_paragraph": "Paste job here in Claude.ai chat to get customized cover letter"
+        "custom_paragraph": "Paste this job in Claude.ai to get customized CV and cover letter"
     }
     requests.post(MAKE_WEBHOOK, json=payload)
-
-def main():
-    seen_ids = set()
-    all_jobs = []
-
-    for actor_id, input_data in SEARCH_INPUTS.items():
-        jobs = run_apify_actor(actor_id, input_data)
-        for job in jobs:
-            jid = job.get("id", "")
-            if jid in seen_ids:
-                continue
-            seen_ids.add(jid)
-            applicants = str(job.get("applicantsCount", "99"))
-            try:
-                if int(applicants) > 10:
-                    continue
-            except:
-                pass
-            all_jobs.append(job)
-
-    print(f"Jobs after filter: {len(all_jobs)}")
-
-    for job in all_jobs:
-        desc = job.get("descriptionText", "")
-        result = filter_job(desc)
-        if not result.get("pass"):
-            continue
-        send_to_sheet(job, result)
-        time.sleep(1)
+    print(f"Sent: {job.get('title')} at {job.get('companyName')}")
 
 def run_apify_actor(actor_id, input_data):
     url = f"https://api.apify.com/v2/acts/{actor_id}/runs?token={APIFY_TOKEN}"
@@ -140,6 +174,36 @@ def run_apify_actor(actor_id, input_data):
         f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_TOKEN}&limit=200"
     ).json()
     return items
+
+def main():
+    seen_ids = set()
+    all_jobs = []
+
+    for actor_id, input_data in SEARCH_INPUTS.items():
+        print(f"Running scraper with {len(input_data['urls'])} URLs")
+        jobs = run_apify_actor(actor_id, input_data)
+        print(f"Raw jobs returned: {len(jobs)}")
+        for job in jobs:
+            jid = job.get("id", "")
+            if jid in seen_ids:
+                continue
+            seen_ids.add(jid)
+            all_jobs.append(job)
+
+    print(f"Total unique jobs: {len(all_jobs)}")
+
+    passed = 0
+    for job in all_jobs:
+        title = job.get("title", "")
+        desc = job.get("descriptionText", "")
+        result = filter_job(title, desc)
+        if not result.get("pass"):
+            continue
+        passed += 1
+        send_to_sheet(job, result)
+        time.sleep(1)
+
+    print(f"Jobs sent to sheet: {passed}")
 
 if __name__ == "__main__":
     main()
