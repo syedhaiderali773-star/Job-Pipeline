@@ -108,11 +108,7 @@ def main():
                 continue
             seen_ids.add(jid)
             applicants = str(job.get("applicantsCount", "99"))
-            try:
-                if int(applicants) > 10:
-                    continue
-            except:
-                pass
+
             all_jobs.append(job)
 
     print(f"Jobs after filter: {len(all_jobs)}")
