@@ -3,50 +3,6 @@ import requests, json, time, os
 APIFY_TOKEN = os.environ["APIFY_TOKEN"]
 MAKE_WEBHOOK = os.environ["MAKE_WEBHOOK_URL"]
 
-KEYWORDS = [
-    "junior", "trainee", "associate", "graduate", "entry level",
-    "business analyst", "project coordinator", "operations",
-    "supply chain", "marketing", "digital", "data analyst",
-    "product manager", "business development", "strategy",
-    "consulting", "e-commerce", "procurement", "logistics",
-    "finance analyst", "hr coordinator", "sales associate",
-    "customer success", "program coordinator", "project management"
-]
-
-CITIES = [
-    "Berlin", "Munich", "Hamburg", "Frankfurt", "Cologne",
-    "Stuttgart", "Dusseldorf", "Leipzig", "Dortmund", "Essen",
-    "Bremen", "Dresden", "Hannover", "Nuremberg", "Mannheim",
-    "Augsburg", "Wiesbaden", "Bonn", "Karlsruhe", "Munster",
-    "Freiburg", "Heidelberg", "Kiel", "Mainz", "Erfurt"
-]
-
-SEARCH_URLS = []
-
-KEYWORD_GROUPS = [
-    "junior OR trainee OR associate OR graduate",
-    "business+analyst OR operations OR supply+chain OR procurement OR logistics",
-    "marketing OR digital OR consulting OR e-commerce OR strategy",
-    "data+analyst OR project+manager OR business+development OR customer+success"
-]
-
-for group in KEYWORD_GROUPS:
-    for city in CITIES[:5]:
-        SEARCH_URLS.append(
-            f"https://www.linkedin.com/jobs/search/?keywords={group}&location={city}&f_TPR=r7200&f_E=1,2,3,4"
-        )
-    for location in ["Germany", "DACH", "EMEA"]:
-        SEARCH_URLS.append(
-            f"https://www.linkedin.com/jobs/search/?keywords={group}&location={location}&f_TPR=r7200&f_E=1,2,3,4"
-        )
-
-SEARCH_INPUTS = {
-    "cheap_scraper~linkedin-job-scraper": {
-        "urls": SEARCH_URLS,
-        "count": 50
-    }
-}
-
 GERMAN_REQUIRED = [
     "deutschkenntnisse erforderlich",
     "deutsch zwingend",
@@ -55,20 +11,20 @@ GERMAN_REQUIRED = [
     "must speak german",
     "german language required",
     "verhandlungssicheres deutsch",
-    "fließende deutschkenntnisse",
+    "fliessende deutschkenntnisse",
     "sehr gute deutschkenntnisse",
-    "german: c1",
-    "german: c2",
+    "german: c1", "german: c2",
     "muttersprache deutsch",
-    "fließendes deutsch",
+    "fliessendes deutsch",
     "deutsch voraussetzung",
     "deutschkenntnisse vorausgesetzt",
     "german language is a must",
-    "fluent german",
+    "fluent german is required",
     "fluency in german is required",
     "german fluency required",
-    "c1 german",
-    "c2 german"
+    "c1 german", "c2 german",
+    "german speaker required",
+    "native german"
 ]
 
 GERMAN_OK = [
@@ -76,8 +32,7 @@ GERMAN_OK = [
     "german is an advantage",
     "german preferred",
     "basic german",
-    "german b1",
-    "german b2",
+    "german b1", "german b2",
     "german is not required",
     "no german required",
     "english is sufficient",
@@ -86,124 +41,191 @@ GERMAN_OK = [
     "german is beneficial",
     "german is desirable",
     "german is welcome",
-    "knowledge of german is a plus"
+    "knowledge of german is a plus",
+    "german is optional",
+    "german would be a plus"
 ]
 
-GERMAN_TITLE_SYLLABLES = [
-    "leiter", "leitung", "kaufmann", "kauffrau", "sachbearbeiter",
-    "werkstudent", "referent", "mitarbeiter", "vertrieb", "einkauf",
-    "buchhaltung", "praktikant", "ausbildung", "beratung", "entwicklung",
-    "geschafts", "projekt", "abteilung", "verantwortlich", "stellvertreter"
-]
-
-def is_german_title(title):
-    title_lower = title.lower()
-    for syllable in GERMAN_TITLE_SYLLABLES:
-        if syllable in title_lower:
-            return True
-    return False
-
-def is_german_description(description):
-    desc_lower = description.lower()
+def is_german_text(text):
     german_words = [
         " und ", " die ", " der ", " das ", " wir ",
-        " sie ", " mit ", " für ", " von ", " auf ",
+        " sie ", " mit ", " fur ", " von ", " auf ",
         " ist ", " ein ", " eine ", " nicht ", " auch ",
-        " bei ", " als ", " nach ", " aber ", " oder "
+        " bei ", " als ", " nach ", " aber ", " oder ",
+        " werden ", " haben ", " durch ", " ihrer ",
+        " konnen ", " ihrem ", " diesem ", " dieser "
     ]
-    count = sum(desc_lower.count(w) for w in german_words)
-    return count > 15
+    count = sum(text.lower().count(w) for w in german_words)
+    total_words = len(text.split())
+    if total_words == 0:
+        return False
+    return (count / total_words) > 0.05
 
 def filter_job(title, description):
     desc_lower = description.lower()
 
-    # Fail if title has German syllables
-    if is_german_title(title):
+    if is_german_text(title):
         return {"pass": False, "reason": "German title"}
 
-    # Fail if description is written in German
-    if is_german_description(description):
+    if is_german_text(description):
         return {"pass": False, "reason": "German description"}
 
-    # Fail if German explicitly required
     for kw in GERMAN_REQUIRED:
         if kw in desc_lower:
             return {"pass": False, "reason": "German required"}
 
-    # Pass if German listed as plus/optional
     for kw in GERMAN_OK:
         if kw in desc_lower:
             return {"pass": True, "german_requirement": "German is a plus"}
 
-    # Pass — English description, no German requirement found
     return {"pass": True, "german_requirement": "Not specified"}
 
-def send_to_sheet(job, filter_result):
+def send_to_sheet(job, filter_result, platform):
     payload = {
         "job_id": job.get("id", ""),
         "title": job.get("title", ""),
-        "company": job.get("companyName", ""),
-        "platform": "LinkedIn",
+        "company": job.get("companyName", job.get("company", "")),
+        "platform": platform,
         "city": job.get("location", ""),
-        "posted": job.get("postedAt", ""),
+        "posted": job.get("postedAt", job.get("date", "")),
         "applicants": job.get("applicantsCount", ""),
         "german_req": filter_result.get("german_requirement", "Not specified"),
         "level": job.get("seniorityLevel", ""),
-        "apply_link": job.get("link", ""),
+        "apply_link": job.get("link", job.get("url", job.get("applyUrl", ""))),
         "status": "New",
-        "custom_paragraph": "Paste this job in Claude.ai to get customized CV and cover letter"
+        "custom_paragraph": "Paste this job into Claude.ai to get customized CV and cover letter"
     }
     requests.post(MAKE_WEBHOOK, json=payload)
-    print(f"Sent: {job.get('title')} at {job.get('companyName')}")
+    print(f"Sent: {payload['title']} at {payload['company']} [{platform}]")
 
-def run_apify_actor(actor_id, input_data):
+def run_actor(actor_id, input_data):
     url = f"https://api.apify.com/v2/acts/{actor_id}/runs?token={APIFY_TOKEN}"
     r = requests.post(url, json=input_data)
+    if r.status_code != 201:
+        print(f"Failed to start actor {actor_id}: {r.text}")
+        return []
     run_id = r.json()["data"]["id"]
-    for _ in range(30):
-        time.sleep(10)
-        status = requests.get(
+    for _ in range(40):
+        time.sleep(15)
+        status_r = requests.get(
             f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_TOKEN}"
-        ).json()["data"]["status"]
-        if status == "SUCCEEDED":
+        ).json()
+        status = status_r["data"]["status"]
+        print(f"Actor {actor_id} status: {status}")
+        if status in ["SUCCEEDED", "FAILED", "ABORTED"]:
             break
-    dataset_id = requests.get(
-        f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_TOKEN}"
-    ).json()["data"]["defaultDatasetId"]
+    if status != "SUCCEEDED":
+        print(f"Actor {actor_id} did not succeed: {status}")
+        return []
+    dataset_id = status_r["data"]["defaultDatasetId"]
     items = requests.get(
-        f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_TOKEN}&limit=200"
+        f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_TOKEN}&limit=500"
     ).json()
-    return items
+    return items if isinstance(items, list) else []
+
+def scrape_linkedin():
+    print("Starting LinkedIn scraper...")
+    keyword_groups = [
+        "junior OR trainee OR associate OR graduate",
+        "business analyst OR operations OR supply chain OR procurement OR logistics",
+        "marketing OR digital OR consulting OR e-commerce OR strategy",
+        "data analyst OR project manager OR business development OR customer success"
+    ]
+    urls = []
+    for group in keyword_groups:
+        for location in ["Germany", "DACH", "EMEA"]:
+            urls.append(
+                f"https://www.linkedin.com/jobs/search/?keywords={group}&location={location}&f_TPR=r43200&f_E=1,2,3,4"
+            )
+    jobs = run_actor("curious_coder~linkedin-jobs-scraper", {
+        "urls": urls,
+        "count": 25,
+        "scrapeCompany": False
+    })
+    print(f"LinkedIn raw jobs: {len(jobs)}")
+    return jobs, "LinkedIn"
+
+def scrape_stepstone():
+    print("Starting StepStone scraper...")
+    keywords = [
+        "junior business analyst", "trainee operations",
+        "associate marketing", "junior supply chain",
+        "junior project manager", "associate consulting",
+        "junior data analyst", "graduate business"
+    ]
+    all_jobs = []
+    for kw in keywords:
+        jobs = run_actor("memo23~stepstone-search-cheerio-ppr", {
+            "keyword": kw,
+            "location": "Deutschland",
+            "maxItems": 15
+        })
+        all_jobs.extend(jobs)
+        time.sleep(2)
+    print(f"StepStone raw jobs: {len(all_jobs)}")
+    return all_jobs, "StepStone"
+
+def scrape_arbeitsagentur():
+    print("Starting Arbeitsagentur scraper...")
+    keywords = [
+        "junior business analyst", "trainee marketing",
+        "associate operations", "junior supply chain",
+        "junior consultant", "junior project manager"
+    ]
+    all_jobs = []
+    for kw in keywords:
+        jobs = run_actor("fatihtahta~arbeitsagentur-scraper", {
+            "keyword": kw,
+            "location": "Deutschland",
+            "maxItems": 15
+        })
+        all_jobs.extend(jobs)
+        time.sleep(2)
+    print(f"Arbeitsagentur raw jobs: {len(all_jobs)}")
+    return all_jobs, "Arbeitsagentur"
 
 def main():
     seen_ids = set()
-    all_jobs = []
+    total_sent = 0
 
-    for actor_id, input_data in SEARCH_INPUTS.items():
-        print(f"Running scraper with {len(input_data['urls'])} URLs")
-        jobs = run_apify_actor(actor_id, input_data)
-        print(f"Raw jobs returned: {len(jobs)}")
+    sources = [
+        scrape_linkedin,
+        scrape_stepstone,
+        scrape_arbeitsagentur
+    ]
+
+    for scrape_fn in sources:
+        try:
+            jobs, platform = scrape_fn()
+        except Exception as e:
+            print(f"Error in {scrape_fn.__name__}: {e}")
+            continue
+
         for job in jobs:
-            jid = job.get("id", "")
-            if jid in seen_ids:
+            jid = str(job.get("id", job.get("url", job.get("title", ""))))
+            if jid in seen_ids or not jid:
                 continue
             seen_ids.add(jid)
-            all_jobs.append(job)
 
-    print(f"Total unique jobs: {len(all_jobs)}")
+            title = job.get("title", "")
+            desc = job.get("descriptionText", job.get("description", job.get("fullDescription", "")))
 
-    passed = 0
-    for job in all_jobs:
-        title = job.get("title", "")
-        desc = job.get("descriptionText", "")
-        result = filter_job(title, desc)
-        if not result.get("pass"):
-            continue
-        passed += 1
-        send_to_sheet(job, result)
-        time.sleep(1)
+            if not title or not desc:
+                continue
 
-    print(f"Jobs sent to sheet: {passed}")
+            result = filter_job(title, desc)
+            if not result.get("pass"):
+                print(f"Filtered: {title} — {result.get('reason')}")
+                continue
+
+            try:
+                send_to_sheet(job, result, platform)
+                total_sent += 1
+                time.sleep(0.5)
+            except Exception as e:
+                print(f"Error sending to sheet: {e}")
+
+    print(f"\nDone. Total jobs sent to sheet: {total_sent}")
 
 if __name__ == "__main__":
     main()
